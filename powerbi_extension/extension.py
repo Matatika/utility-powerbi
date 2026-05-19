@@ -12,6 +12,7 @@ from meltano.edk import models
 from meltano.edk.extension import ExtensionBase
 
 from powerbi_extension.auth import get_token
+from powerbi_extension.retry import powerbi_retry
 
 BASE_URL = "https://api.powerbi.com/v1.0/myorg"
 TIMEOUT = 30
@@ -60,6 +61,7 @@ class PowerBIExtension(ExtensionBase):
         """
         raise NotImplementedError
 
+    @powerbi_retry
     def refresh(
         self,
         notify_option: t.Literal[
@@ -79,15 +81,19 @@ class PowerBIExtension(ExtensionBase):
         )
         res = requests.post(url, json=body, headers=self.headers, timeout=TIMEOUT)
         self.log.info("refresh trigger response", status_code=res.status_code)
+        # Surface 4xx/5xx as HTTPError so the retry policy can inspect status.
+        res.raise_for_status()
         # Power BI's enhanced refresh API returns 202 Accepted on success, not 200.
         if res.status_code != 202:
-            self.log.error(res.reason, status_code=res.status_code)
-            raise requests.RequestException(res.status_code, res.reason, res.headers)
+            raise requests.HTTPError(
+                f"unexpected status {res.status_code} (expected 202)", response=res
+            )
         # The requestId is exposed in the Location header (path tail) and mirrored
         # in x-ms-request-id; the upstream `RequestId` header is not a real header.
         location = res.headers.get("Location", "")
         return location.rsplit("/", 1)[-1] or res.headers["x-ms-request-id"]
 
+    @powerbi_retry
     def get_refresh_status(self, request_id: str) -> dict:
         """Fetch the status of a single refresh by requestId.
 
