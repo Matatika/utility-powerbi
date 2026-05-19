@@ -172,9 +172,12 @@ def test_refresh_custom_poll_and_notify(mock_ext_class: MagicMock):
         app,
         [
             "refresh",
-            "--poll-interval", "5",
-            "--timeout", "120",
-            "--notify", "MailOnFailure",
+            "--poll-interval",
+            "5",
+            "--timeout",
+            "120",
+            "--notify",
+            "MailOnFailure",
         ],
     )
 

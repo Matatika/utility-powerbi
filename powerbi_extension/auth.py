@@ -1,4 +1,5 @@
 """PowerBI authentication module."""
+
 import os
 import typing as t
 

@@ -1,4 +1,5 @@
 """Meltano PowerBI extension."""
+
 from __future__ import annotations
 
 import os
@@ -133,9 +134,7 @@ class PowerBIExtension(ExtensionBase):
         while time.monotonic() < deadline:
             result = self.get_refresh_status(request_id)
             status = result.get("status", "Unknown")
-            self.log.info(
-                "polled refresh status", request_id=request_id, status=status
-            )
+            self.log.info("polled refresh status", request_id=request_id, status=status)
             if status in TERMINAL_STATUSES:
                 return result
             time.sleep(poll_interval)

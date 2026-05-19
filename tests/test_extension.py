@@ -91,9 +91,7 @@ class TestExtension:
             f"{BASE_URL}/groups/{WORKSPACE_ID}/datasets/{DATASET_ID}"
             f"/refreshes/{request_id}"
         )
-        mock_get.assert_called_once_with(
-            url, headers=self.ext.headers, timeout=TIMEOUT
-        )
+        mock_get.assert_called_once_with(url, headers=self.ext.headers, timeout=TIMEOUT)
         assert result["requestId"] == request_id
         assert result["status"] == "Completed"
 
