@@ -234,8 +234,44 @@ def test_history_http_error(mock_ext_class: MagicMock):
     assert result.exit_code == 3
 
 
-@patch.object(PowerBIExtension, "__new__")
-def test_describe(mock_ext: MagicMock):
+def test_describe_no_config(monkeypatch):
+    """describe must work with zero env vars and no network access.
+
+    Regression test for v0.1.0 where `PowerBIExtension.__init__` eagerly
+    read `POWERBI_*` env vars and called `ClientSecretCredential.get_token`,
+    crashing introspection before any Power BI config existed.
+    """
+    for var in (
+        "POWERBI_WORKSPACE_ID",
+        "POWERBI_DATASET_ID",
+        "POWERBI_TENANT_ID",
+        "POWERBI_CLIENT_ID",
+        "POWERBI_CLIENT_SECRET",
+        "POWERBI_API_URL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
     result = runner.invoke(app, ["describe"])
-    assert result.exit_code == 0
-    mock_ext.assert_called_once()
+    assert result.exit_code == 0, result.stdout
+    assert "refresh" in result.stdout
+    assert "status" in result.stdout
+    assert "history" in result.stdout
+
+
+def test_describe_json_no_config(monkeypatch):
+    for var in (
+        "POWERBI_WORKSPACE_ID",
+        "POWERBI_DATASET_ID",
+        "POWERBI_TENANT_ID",
+        "POWERBI_CLIENT_ID",
+        "POWERBI_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    result = runner.invoke(app, ["describe", "--format", "json"])
+    assert result.exit_code == 0, result.stdout
+    import json as _json
+
+    payload = _json.loads(result.stdout)
+    names = {c["name"] for c in payload["commands"]}
+    assert names == {"refresh", "status", "history"}
