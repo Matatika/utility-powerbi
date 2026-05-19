@@ -6,6 +6,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   PACKAGE_DIR: powerbi_extension
   TESTS_DIR: tests
