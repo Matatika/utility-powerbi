@@ -3,7 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from meltano.edk.models import Describe, ExtensionCommand
-from requests import RequestException
+from requests import ConnectionError as RequestsConnectionError
+from requests import HTTPError, RequestException
 
 from powerbi_extension.extension import (
     BASE_URL,
@@ -11,6 +12,19 @@ from powerbi_extension.extension import (
     PowerBIExtension,
     PowerBIRefreshTimeout,
 )
+
+
+def _http_response(status_code: int, headers: dict | None = None, body: dict | None = None):
+    """Build a MagicMock response whose `raise_for_status()` mirrors requests' behaviour."""
+    res = MagicMock(status_code=status_code, headers=headers or {})
+    if body is not None:
+        res.json.return_value = body
+    if status_code >= 400:
+        err = HTTPError(f"HTTP {status_code}", response=res)
+        res.raise_for_status.side_effect = err
+    else:
+        res.raise_for_status.return_value = None
+    return res
 
 TOKEN = "token"
 WORKSPACE_ID = "workspace_id"
@@ -42,8 +56,8 @@ class TestExtension:
     @patch("requests.post")
     def test_refresh_ok(self, mock_post: MagicMock):
         request_id = "abcd-1234"
-        mock_res = MagicMock(
-            status_code=202,
+        mock_res = _http_response(
+            202,
             headers={
                 "Location": (
                     f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}"
@@ -63,27 +77,109 @@ class TestExtension:
         )
         assert res == request_id
 
+    @patch("tenacity.nap.time.sleep")
     @patch("requests.post")
-    def test_refresh_not_ok(self, mock_post: MagicMock):
-        mock_res = MagicMock(status_code=400)
-        url = f"{BASE_URL}/groups/{WORKSPACE_ID}/datasets/{DATASET_ID}/refreshes"
-        body = {
-            "notifyOption": "NoNotification",
-        }
-        mock_post.return_value = mock_res
+    def test_refresh_not_ok(self, mock_post: MagicMock, _mock_sleep: MagicMock):
+        mock_post.return_value = _http_response(400)
         with pytest.raises(RequestException):
             self.ext.refresh()
+        # 400 is not retryable.
+        assert mock_post.call_count == 1
 
-        mock_post.assert_called_once_with(
-            url, json=body, headers=self.ext.headers, timeout=TIMEOUT
-        )
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_retries_on_500_then_succeeds(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock
+    ):
+        request_id = "retry-after-500"
+        mock_post.side_effect = [
+            _http_response(500),
+            _http_response(500),
+            _http_response(
+                202,
+                headers={
+                    "Location": (
+                        f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}"
+                        f"/datasets/{DATASET_ID}/refreshes/{request_id}"
+                    ),
+                    "x-ms-request-id": request_id,
+                },
+            ),
+        ]
+        assert self.ext.refresh() == request_id
+        assert mock_post.call_count == 3
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_retries_on_429_then_succeeds(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock
+    ):
+        request_id = "retry-after-429"
+        mock_post.side_effect = [
+            _http_response(429),
+            _http_response(
+                202,
+                headers={
+                    "Location": (
+                        f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}"
+                        f"/datasets/{DATASET_ID}/refreshes/{request_id}"
+                    ),
+                    "x-ms-request-id": request_id,
+                },
+            ),
+        ]
+        assert self.ext.refresh() == request_id
+        assert mock_post.call_count == 2
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_exhausts_retries_on_persistent_500(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock
+    ):
+        mock_post.return_value = _http_response(500)
+        with pytest.raises(HTTPError):
+            self.ext.refresh()
+        # Stops after 3 attempts.
+        assert mock_post.call_count == 3
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_does_not_retry_on_401(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock
+    ):
+        mock_post.return_value = _http_response(401)
+        with pytest.raises(HTTPError):
+            self.ext.refresh()
+        assert mock_post.call_count == 1
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_retries_on_connection_error(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock
+    ):
+        request_id = "retry-after-netfail"
+        mock_post.side_effect = [
+            RequestsConnectionError("dns blip"),
+            _http_response(
+                202,
+                headers={
+                    "Location": (
+                        f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}"
+                        f"/datasets/{DATASET_ID}/refreshes/{request_id}"
+                    ),
+                    "x-ms-request-id": request_id,
+                },
+            ),
+        ]
+        assert self.ext.refresh() == request_id
+        assert mock_post.call_count == 2
 
     @patch("requests.get")
     def test_get_refresh_status(self, mock_get: MagicMock):
         request_id = "abcd-1234"
-        mock_res = MagicMock(status_code=200)
-        mock_res.json.return_value = {"requestId": request_id, "status": "Completed"}
-        mock_get.return_value = mock_res
+        mock_get.return_value = _http_response(
+            200, body={"requestId": request_id, "status": "Completed"}
+        )
 
         result = self.ext.get_refresh_status(request_id)
 
@@ -94,6 +190,36 @@ class TestExtension:
         mock_get.assert_called_once_with(url, headers=self.ext.headers, timeout=TIMEOUT)
         assert result["requestId"] == request_id
         assert result["status"] == "Completed"
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.get")
+    def test_get_refresh_status_retries_on_503(
+        self, mock_get: MagicMock, _mock_sleep: MagicMock
+    ):
+        request_id = "abc"
+        mock_get.side_effect = [
+            _http_response(503),
+            _http_response(200, body={"requestId": request_id, "status": "Completed"}),
+        ]
+        result = self.ext.get_refresh_status(request_id)
+        assert result["status"] == "Completed"
+        assert mock_get.call_count == 2
+
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.get")
+    def test_get_refresh_status_retries_on_timeout(
+        self, mock_get: MagicMock, _mock_sleep: MagicMock
+    ):
+        from requests import Timeout
+
+        request_id = "abc"
+        mock_get.side_effect = [
+            Timeout("read timeout"),
+            _http_response(200, body={"requestId": request_id, "status": "Completed"}),
+        ]
+        result = self.ext.get_refresh_status(request_id)
+        assert result["status"] == "Completed"
+        assert mock_get.call_count == 2
 
     @patch("requests.get")
     def test_list_refresh_history(self, mock_get: MagicMock):

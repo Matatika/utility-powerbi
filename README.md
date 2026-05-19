@@ -158,6 +158,31 @@ jobs:
 
 A non-zero exit from `powerbi:refresh` fails the Meltano job.
 
+## Retry behavior
+
+`refresh` (trigger POST) and status polls (GET) automatically retry on
+transient failures:
+
+| Condition | Retried? |
+|---|---|
+| HTTP 429 (rate limit) | yes |
+| HTTP 500 / 502 / 503 / 504 | yes |
+| `requests.ConnectionError` (DNS, TCP, TLS handshake) | yes |
+| `requests.Timeout` (read / connect timeout) | yes |
+| HTTP 4xx (other) — auth, not found, bad request | no |
+| Any other exception | no |
+
+Strategy: up to 3 attempts per call, exponential backoff with jitter
+(initial 2s, max 30s). 4xx failures are surfaced immediately because they
+indicate a config or permissions problem — retrying just delays the
+inevitable failure.
+
+`history` (operator command) is not auto-retried; re-run it by hand if it
+flakes.
+
+A successful retry adds wall-clock time to `refresh` (up to ~14s for two
+backoffs). Account for this when sizing `--timeout`.
+
 ## Troubleshooting
 
 | Symptom | Cause |

@@ -18,6 +18,7 @@ typer = "^0.6.1"
 "meltano.edk" = { git = "https://github.com/meltano/edk.git", rev = "main" }
 azure-identity = "^1.14.0"
 requests = "^2.31.0"
+tenacity = "^9.0.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^26.3.1"
