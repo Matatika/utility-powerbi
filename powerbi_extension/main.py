@@ -6,11 +6,30 @@ import sys
 import requests
 import structlog
 import typer
+import yaml
 from azure.core.exceptions import ClientAuthenticationError
+from meltano.edk import models
 from meltano.edk.extension import DescribeFormat
 from meltano.edk.logging import default_logging_config, parse_log_level
 
 from powerbi_extension.extension import PowerBIExtension, PowerBIRefreshTimeout
+
+_DESCRIBE = models.Describe(
+    commands=[
+        models.ExtensionCommand(
+            name="refresh",
+            description="Trigger a Power BI dataset refresh and (by default) wait for completion.",
+        ),
+        models.ExtensionCommand(
+            name="status",
+            description="Get the status of the most recent (or a specific) refresh.",
+        ),
+        models.ExtensionCommand(
+            name="history",
+            description="List recent refresh history for the configured dataset.",
+        ),
+    ]
+)
 
 # Exit codes used by `refresh` so Meltano can stop a pipeline on failure.
 EXIT_COMPLETED = 0
@@ -34,9 +53,26 @@ def describe(
         DescribeFormat.text, "--format", help="Output format"
     )
 ) -> None:
-    """Describe the available commands of this extension."""
-    ext = PowerBIExtension()
-    typer.echo(ext.describe_formatted(output_format))
+    """Describe the available commands of this extension.
+
+    Builds the descriptor directly so introspection works without any
+    Power BI / Azure config — `PowerBIExtension.__init__` eagerly reads
+    env vars and acquires a token, neither of which `describe` needs.
+    """
+    if output_format == DescribeFormat.json:
+        typer.echo(_DESCRIBE.model_dump_json(indent=2))
+    elif output_format == DescribeFormat.yaml:
+        typer.echo(
+            yaml.dump(
+                yaml.safe_load(_DESCRIBE.model_dump_json()),
+                sort_keys=False,
+                indent=2,
+            )
+        )
+    else:
+        from pprint import pformat
+
+        typer.echo(pformat(_DESCRIBE))
 
 
 @app.command()
