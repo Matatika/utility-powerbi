@@ -72,7 +72,7 @@ class PowerBIExtension(ExtensionBase):
         """Trigger a refresh of the configured dataset."""
         body = {
             "notifyOption": notify_option,
-            # "type": type,
+            "type": type or "Full",
         }
 
         url = (
@@ -91,7 +91,7 @@ class PowerBIExtension(ExtensionBase):
         # The requestId is exposed in the Location header (path tail) and mirrored
         # in x-ms-request-id; the upstream `RequestId` header is not a real header.
         location = res.headers.get("Location", "")
-        return location.rsplit("/", 1)[-1] or res.headers["x-ms-request-id"]
+        return location.rsplit("/", 1)[-1] or res.headers.get("x-ms-request-id")
 
     @powerbi_retry
     def get_refresh_status(self, request_id: str) -> dict:

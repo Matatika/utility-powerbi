@@ -69,6 +69,7 @@ class TestExtension:
         url = f"{BASE_URL}/groups/{WORKSPACE_ID}/datasets/{DATASET_ID}/refreshes"
         body = {
             "notifyOption": "NoNotification",
+            "type": "Full",
         }
         mock_post.return_value = mock_res
         res = self.ext.refresh()
