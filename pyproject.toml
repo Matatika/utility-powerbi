@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "utility-powerbi"
-version = "0.1.1"
+version = "0.2.0"
 description = "Meltano utility extension for triggering and monitoring Power BI dataset refreshes."
 authors = ["Matatika <support@matatika.com>"]
 license = "Apache 2.0"
