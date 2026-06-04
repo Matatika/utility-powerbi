@@ -11,7 +11,7 @@ import structlog
 from meltano.edk import models
 from meltano.edk.extension import ExtensionBase
 
-from powerbi_extension.auth import get_token
+from powerbi_extension import auth
 from powerbi_extension.retry import powerbi_retry
 
 BASE_URL = "https://api.powerbi.com/v1.0/myorg"
@@ -44,10 +44,37 @@ class PowerBIExtension(ExtensionBase):
         self.workspace_id = os.environ["POWERBI_WORKSPACE_ID"]
         self.dataset_id = os.environ["POWERBI_DATASET_ID"]
         self.api_url = os.environ.get("POWERBI_API_URL", BASE_URL)
+        # Whether a delegated access token can be refreshed mid-run (OAuth mode).
+        # Power BI access tokens are short-lived (~1h), so a long-running
+        # wait_for_refresh poll can outlast the token; see _request.
+        self._can_reauth = auth.can_refresh()
         if not token:
-            token = get_token()
+            token = auth.resolve_token()
         self.log.info("Bearer token accessed.")
+        self._apply_token(token)
+
+    def _apply_token(self, token: str) -> None:
+        """Set the Authorization header from a bearer token."""
         self.headers = {"Authorization": f"Bearer {token}"}
+
+    def _reauth(self) -> bool:
+        """Refresh the access token via the OAuth proxy, if possible.
+
+        Returns True if the header was refreshed (OAuth mode only), so callers
+        can retry the request once. Service-principal mode is left unchanged.
+        """
+        if not self._can_reauth:
+            return False
+        self.log.info("access token rejected; refreshing via OAuth proxy")
+        self._apply_token(auth._oauth_refresh())
+        return True
+
+    def _request(self, requester: t.Callable, url: str, **kwargs: t.Any):
+        """Issue a request, refreshing the token once on a 401 in OAuth mode."""
+        res = requester(url, headers=self.headers, **kwargs)
+        if res.status_code == 401 and self._reauth():
+            res = requester(url, headers=self.headers, **kwargs)
+        return res
 
     def invoke(self, *args: t.Any, **kwargs: t.Any) -> None:
         """Invoke the underlying CLI that is being wrapped by this extension.
@@ -79,7 +106,7 @@ class PowerBIExtension(ExtensionBase):
             f"{self.api_url}/groups/{self.workspace_id}"
             f"/datasets/{self.dataset_id}/refreshes"
         )
-        res = requests.post(url, json=body, headers=self.headers, timeout=TIMEOUT)
+        res = self._request(requests.post, url, json=body, timeout=TIMEOUT)
         self.log.info("refresh trigger response", status_code=res.status_code)
         # Surface 4xx/5xx as HTTPError so the retry policy can inspect status.
         res.raise_for_status()
@@ -105,7 +132,7 @@ class PowerBIExtension(ExtensionBase):
             f"{self.api_url}/groups/{self.workspace_id}"
             f"/datasets/{self.dataset_id}/refreshes/{request_id}"
         )
-        res = requests.get(url, headers=self.headers, timeout=TIMEOUT)
+        res = self._request(requests.get, url, timeout=TIMEOUT)
         res.raise_for_status()
         return res.json()
 
@@ -118,9 +145,7 @@ class PowerBIExtension(ExtensionBase):
             f"{self.api_url}/groups/{self.workspace_id}"
             f"/datasets/{self.dataset_id}/refreshes"
         )
-        res = requests.get(
-            url, headers=self.headers, params={"$top": top}, timeout=TIMEOUT
-        )
+        res = self._request(requests.get, url, params={"$top": top}, timeout=TIMEOUT)
         res.raise_for_status()
         return res.json().get("value", [])
 
