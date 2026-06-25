@@ -70,9 +70,13 @@ class PowerBIExtension(ExtensionBase):
         return True
 
     def _request(self, requester: t.Callable, url: str, **kwargs: t.Any):
-        """Issue a request, refreshing the token once on a 401 in OAuth mode."""
+        """Issue a request, refreshing the token once on a 401/403 in OAuth mode.
+
+        Power BI returns 403 (not 401) with code "TokenExpired" when the access
+        token has expired, so both status codes trigger a reauth attempt.
+        """
         res = requester(url, headers=self.headers, **kwargs)
-        if res.status_code == 401 and self._reauth():
+        if res.status_code in {401, 403} and self._reauth():
             res = requester(url, headers=self.headers, **kwargs)
         return res
 
