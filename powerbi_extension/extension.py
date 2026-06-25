@@ -76,8 +76,7 @@ class PowerBIExtension(ExtensionBase):
         token has expired, so both status codes trigger a reauth attempt.
         """
         res = requester(url, headers=self.headers, **kwargs)
-        if res.status_code == 401 or (res.status_code == 403 and res.json()["error"]["code"] == "TokenExpired" ):
-            self._reauth():
+        if (res.status_code == 401 or (res.status_code == 403 and res.json()["error"]["code"] == "TokenExpired")) and self._reauth():
             res = requester(url, headers=self.headers, **kwargs)
         return res
 
