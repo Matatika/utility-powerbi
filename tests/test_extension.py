@@ -230,7 +230,9 @@ class TestExtension:
         # a reauth even in OAuth mode.
         ext = PowerBIExtension(token=TOKEN)
         ext._can_reauth = True
-        mock_post.return_value = _http_response(403, body={"error": {"code": "Forbidden"}})
+        mock_post.return_value = _http_response(
+            403, body={"error": {"code": "Forbidden"}}
+        )
         with pytest.raises(HTTPError):
             ext.refresh()
         assert mock_post.call_count == 1
@@ -258,7 +260,9 @@ class TestExtension:
     ):
         ext = PowerBIExtension(token=TOKEN)
         ext._can_reauth = False  # service-principal mode
-        mock_post.return_value = _http_response(403, body={"error": {"code": "TokenExpired"}})
+        mock_post.return_value = _http_response(
+            403, body={"error": {"code": "TokenExpired"}}
+        )
         with pytest.raises(HTTPError):
             ext.refresh()
         assert mock_post.call_count == 1
