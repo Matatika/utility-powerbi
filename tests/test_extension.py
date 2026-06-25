@@ -203,7 +203,7 @@ class TestExtension:
         ext._can_reauth = True
         request_id = "after-reauth-403"
         mock_post.side_effect = [
-            _http_response(403),
+            _http_response(403, body={"error": {"code": "TokenExpired"}}),
             _http_response(
                 202,
                 headers={
@@ -219,6 +219,22 @@ class TestExtension:
         assert mock_post.call_count == 2
         mock_refresh.assert_called_once()
         assert ext.headers == {"Authorization": "Bearer new-token"}
+
+    @patch("powerbi_extension.extension.auth._oauth_refresh")
+    @patch("tenacity.nap.time.sleep")
+    @patch("requests.post")
+    def test_refresh_does_not_reauth_on_403_without_token_expired_in_oauth_mode(
+        self, mock_post: MagicMock, _mock_sleep: MagicMock, mock_refresh: MagicMock
+    ):
+        # A plain 403 (e.g. permission denied, not an expired token) should not trigger
+        # a reauth even in OAuth mode.
+        ext = PowerBIExtension(token=TOKEN)
+        ext._can_reauth = True
+        mock_post.return_value = _http_response(403, body={"error": {"code": "Forbidden"}})
+        with pytest.raises(HTTPError):
+            ext.refresh()
+        assert mock_post.call_count == 1
+        mock_refresh.assert_not_called()
 
     @patch("powerbi_extension.extension.auth._oauth_refresh")
     @patch("tenacity.nap.time.sleep")
@@ -242,7 +258,7 @@ class TestExtension:
     ):
         ext = PowerBIExtension(token=TOKEN)
         ext._can_reauth = False  # service-principal mode
-        mock_post.return_value = _http_response(403)
+        mock_post.return_value = _http_response(403, body={"error": {"code": "TokenExpired"}})
         with pytest.raises(HTTPError):
             ext.refresh()
         assert mock_post.call_count == 1
